@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Iterator
 
 import dotenv
+import requests
 import spotipy
 from blessed import Terminal
 
@@ -25,7 +27,14 @@ REDIRECT_URI = "http://127.0.0.1:3000"
 BATCH_SIZE = 50
 PLAYLIST_PAGE_SIZE = 50
 REPLACEMENT_SEARCH_WORKERS = 10
+MAX_REPLACEMENT_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 0.5
 MIN_CONFIDENCE = Confidence.HIGH
+TRANSIENT_NETWORK_ERRORS = (
+    requests.ConnectionError,
+    requests.Timeout,
+    ConnectionResetError,
+)
 SCOPES = (
     "user-library-read user-library-modify "
     "playlist-read-private playlist-modify-public playlist-modify-private"
@@ -222,20 +231,50 @@ def select_playlist(sp: spotipy.Spotify, term: Terminal) -> tuple[str, str] | No
 # --- core repair flow -------------------------------------------------------
 
 
+def _find_replacement_with_retry(
+    sp: spotipy.Spotify, track: Track, market: str
+) -> Match | None:
+    """Wrap find_replacement with retry on transient connection errors.
+
+    Spotipy's built-in retry adapter handles HTTP error codes (429, 5xx) but
+    not socket-level errors like ECONNRESET. Under parallel load against
+    Spotify, transient resets do happen — a small backoff loop keeps a single
+    blip from killing a full scan.
+    """
+    for attempt in range(MAX_REPLACEMENT_RETRIES):
+        try:
+            return find_replacement(sp, track, market)
+        except TRANSIENT_NETWORK_ERRORS:
+            if attempt == MAX_REPLACEMENT_RETRIES - 1:
+                raise
+            time.sleep(RETRY_BACKOFF_SECONDS * (2**attempt))
+    return None  # unreachable; satisfies type checker
+
+
 def _find_replacements_parallel(
     sp: spotipy.Spotify, tracks: list[Track], market: str
 ) -> list[Match | None]:
-    """Find replacements concurrently. Returns list aligned with input tracks."""
+    """Find replacements concurrently. Returns list aligned with input tracks.
+
+    Tracks where the search ultimately failed (after retries) get None — the
+    caller treats them the same as "no replacement found", and the count of
+    failures is surfaced to the user.
+    """
     matches: list[Match | None] = [None] * len(tracks)
+    failed = 0
     with ThreadPoolExecutor(max_workers=REPLACEMENT_SEARCH_WORKERS) as ex:
         futures = {
-            ex.submit(find_replacement, sp, track, market): idx
+            ex.submit(_find_replacement_with_retry, sp, track, market): idx
             for idx, track in enumerate(tracks)
         }
         done = 0
         for fut in as_completed(futures):
             idx = futures[fut]
-            matches[idx] = fut.result()
+            try:
+                matches[idx] = fut.result()
+            except TRANSIENT_NETWORK_ERRORS:
+                failed += 1
+                # leave matches[idx] as None — treated as "no replacement"
             done += 1
             print(
                 f"\r  Searching for replacements... {done}/{len(tracks)}",
@@ -247,6 +286,11 @@ def _find_replacements_parallel(
         f"\r  Searched {len(tracks)} tracks — "
         f"{found} replacement(s) found, {len(tracks) - found} not found.        "
     )
+    if failed:
+        print(
+            f"  {failed} search(es) failed after {MAX_REPLACEMENT_RETRIES} retries "
+            f"and were skipped — re-run to retry those tracks."
+        )
     return matches
 
 

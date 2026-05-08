@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from blessed import Terminal
 
 from spotify_repairer import cli
@@ -257,6 +258,67 @@ def test_iterate_tracks_skips_episodes() -> None:
 
 def test_playlist_source_format() -> None:
     assert cli.playlist_source("abc123") == "playlist:abc123"
+
+
+# --- retry behaviour --------------------------------------------------------
+
+
+def test_find_replacement_with_retry_succeeds_after_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sp = MagicMock()
+    track = _track("a")
+    expected = Match(track=_track("a-rep"), confidence=Confidence.EXACT)
+    calls = {"n": 0}
+
+    def fake_find(sp_arg: Any, track_arg: Track, market_arg: str) -> Match | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise requests.ConnectionError("simulated reset")
+        return expected
+
+    monkeypatch.setattr(cli, "find_replacement", fake_find)
+    monkeypatch.setattr("spotify_repairer.cli.time.sleep", lambda _s: None)
+
+    assert cli._find_replacement_with_retry(sp, track, "US") == expected
+    assert calls["n"] == 2
+
+
+def test_find_replacement_with_retry_gives_up_after_max_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sp = MagicMock()
+
+    def always_fails(*_args: Any, **_kwargs: Any) -> Match | None:
+        raise requests.ConnectionError("simulated reset")
+
+    monkeypatch.setattr(cli, "find_replacement", always_fails)
+    monkeypatch.setattr("spotify_repairer.cli.time.sleep", lambda _s: None)
+
+    with pytest.raises(requests.ConnectionError):
+        cli._find_replacement_with_retry(sp, _track("a"), "US")
+
+
+def test_find_replacements_parallel_isolates_persistent_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One track that fails after all retries should not kill the others."""
+    sp = MagicMock()
+    good = _track("good")
+    bad = _track("bad")
+    expected = Match(track=_track("good-rep"), confidence=Confidence.EXACT)
+
+    def fake_retry(sp_arg: Any, track_arg: Track, market_arg: str) -> Match | None:
+        if track_arg.id == "bad":
+            raise requests.ConnectionError("persistent")
+        return expected
+
+    monkeypatch.setattr(cli, "_find_replacement_with_retry", fake_retry)
+
+    results = cli._find_replacements_parallel(sp, [good, bad], "US")
+
+    assert results[0] == expected
+    assert results[1] is None  # bad track gracefully became None
 
 
 # --- get_user_market handles None -------------------------------------------
