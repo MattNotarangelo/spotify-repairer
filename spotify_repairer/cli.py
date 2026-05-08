@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, NamedTuple
 
 import dotenv
 import requests
@@ -151,6 +151,41 @@ def _track_lines(track: Track) -> list[str]:
     return lines
 
 
+class DiffLine(NamedTuple):
+    text: str
+    changed: bool
+
+
+def _diff_track_lines(original: Track, replacement: Track) -> list[DiffLine]:
+    """Render each replacement field as either '<value> (no change)' or
+    '<old> → <new>'. The `changed` flag lets the caller emphasize the
+    differences visually.
+
+    Comparison is case-insensitive (via `casefold`) so trivial capitalization
+    drift between Spotify ingests of the same recording — e.g. "Time for Us"
+    vs "Time For Us" — doesn't get flagged as a meaningful change.
+    """
+
+    def diff(label: str, orig: str, repl: str) -> DiffLine:
+        if orig.casefold() == repl.casefold():
+            return DiffLine(f"    {label}  {orig} (no change)", changed=False)
+        return DiffLine(f"    {label}  {orig} → {repl}", changed=True)
+
+    lines = [
+        diff("Artists:", ", ".join(original.artists), ", ".join(replacement.artists)),
+        diff("Title:  ", original.name, replacement.name),
+        diff("Album:  ", original.album or "?", replacement.album or "?"),
+        diff(
+            "Length: ",
+            _format_duration(original.duration_ms),
+            _format_duration(replacement.duration_ms),
+        ),
+    ]
+    if replacement.isrc:
+        lines.append(diff("ISRC:   ", original.isrc or "?", replacement.isrc))
+    return lines
+
+
 def _print_unplayable(track: Track) -> None:
     print()
     print("─" * 60)
@@ -160,21 +195,29 @@ def _print_unplayable(track: Track) -> None:
 
 
 def _print_replacement(
-    term: Terminal, match: Match, label: str = "Suggested replacement:"
+    term: Terminal,
+    original: Track,
+    match: Match,
+    label: str = "Suggested replacement:",
 ) -> None:
+    """Print the replacement as a per-field diff against the original.
+
+    Heading and changed lines get the confidence color; unchanged lines stay
+    plain so the diff stands out without coloring the whole block.
+    """
     color = _confidence_color(term, match.confidence)
     print()
     print(color(label))
-    for line in _track_lines(match.track):
-        print(color(line))
+    for line in _diff_track_lines(original, match.track):
+        print(color(line.text) if line.changed else line.text)
     print(color(f"    Match:    {_confidence_label(match.confidence)}"))
 
 
 # --- prompts ----------------------------------------------------------------
 
 
-def confirm_repair(term: Terminal, match: Match) -> str:
-    _print_replacement(term, match)
+def confirm_repair(term: Terminal, original: Track, match: Match) -> str:
+    _print_replacement(term, original, match)
     print("\n  [y] add replacement  [n] skip  [q] quit  ", end="", flush=True)
     with term.cbreak():
         while True:
@@ -281,11 +324,7 @@ def _find_replacements_parallel(
                 end="",
                 flush=True,
             )
-    found = sum(1 for m in matches if m is not None)
-    print(
-        f"\r  Searched {len(tracks)} tracks — "
-        f"{found} replacement(s) found, {len(tracks) - found} not found.        "
-    )
+    print(f"\r  Searched {len(tracks)} tracks for replacements.        ")
     if failed:
         print(
             f"  {failed} search(es) failed after {MAX_REPLACEMENT_RETRIES} retries "
@@ -318,37 +357,45 @@ def _classify(
     return to_review, counts
 
 
-def _print_skip_summary(
-    term: Terminal, already_covered: int, counts: dict[str, int]
-) -> None:
-    if already_covered:
+def _print_already_covered(term: Terminal, count: int) -> None:
+    """Filter that runs pre-search; surfaced inline so the drop in search count
+    is explained at the point it happens."""
+    if count:
         print(
             term.green(
-                f"  {already_covered} unplayable track(s) already have a playable "
-                f"version in this source (same ISRC) — no action needed."
+                f"  {count} already covered (same ISRC playable in source) — "
+                f"no action needed."
             )
         )
-    if counts["already_added"]:
+
+
+def _print_post_search_summary(
+    term: Terminal, counts: dict[str, int], to_review: int
+) -> None:
+    """Account for every track that came back from the search — none of these
+    require user input. Counts should sum to len(needs_repair)."""
+    if counts["no_replacement"]:
         print(
-            term.green(
-                f"  {counts['already_added']} replacement(s) already in this source "
-                f"from a previous run — skipped."
+            term.yellow(
+                f"  {counts['no_replacement']} had no available replacement — skipped."
             )
         )
     if counts["below_threshold"]:
         print(
             term.yellow(
-                f"  {counts['below_threshold']} match(es) below the "
+                f"  {counts['below_threshold']} below the "
                 f"{MIN_CONFIDENCE.value} confidence threshold — skipped."
             )
         )
-    if counts["no_replacement"]:
+    if counts["already_added"]:
         print(
-            term.yellow(
-                f"  {counts['no_replacement']} unplayable track(s) had no available "
-                f"replacement — skipped."
+            term.green(
+                f"  {counts['already_added']} already repaired in a previous run "
+                f"— skipped."
             )
         )
+    if to_review:
+        print(term.bold(f"  → {to_review} to review."))
 
 
 def _collect_repairs(
@@ -405,14 +452,10 @@ def _collect_repairs(
         else:
             needs_repair.append((position, track))
 
+    _print_already_covered(term, already_covered)
+
     if not needs_repair:
-        if already_covered:
-            _print_skip_summary(
-                term,
-                already_covered,
-                {"no_replacement": 0, "already_added": 0, "below_threshold": 0},
-            )
-        elif not unplayable:
+        if not unplayable:
             print(term.green("\nNothing to repair — all tracks are playable."))
         return []
 
@@ -422,15 +465,15 @@ def _collect_repairs(
     to_review, skip_counts = _classify(
         needs_repair, matches, track_ids_in_source
     )
-    _print_skip_summary(term, already_covered, skip_counts)
+    _print_post_search_summary(term, skip_counts, to_review=len(to_review))
 
     confirmed: list[tuple[int, Track, Match]] = []
     for position, track, match in to_review:
         _print_unplayable(track)
         if dry_run:
-            _print_replacement(term, match, label="Would replace with:")
+            _print_replacement(term, track, match, label="Would replace with:")
             continue
-        choice = confirm_repair(term, match)
+        choice = confirm_repair(term, track, match)
         if choice == "q":
             break
         if choice == "y":
@@ -507,8 +550,8 @@ def main() -> None:
     term = Terminal()
     market = get_user_market(sp)
     options = [
-        ("preview_liked", "Preview liked songs (no changes)"),
-        ("preview_playlist", "Preview playlist (no changes)"),
+        ("preview_liked", "Preview liked songs (dry run)"),
+        ("preview_playlist", "Preview playlist (dry run)"),
         ("repair_liked", "Repair liked songs"),
         ("repair_playlist", "Repair playlist"),
         ("exit", "Exit"),

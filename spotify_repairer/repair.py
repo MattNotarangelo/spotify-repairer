@@ -112,6 +112,30 @@ def _playable_search_results(
     return [item for item in items if item.get("is_playable", True)]
 
 
+def _names_compatible(a: str, b: str) -> bool:
+    """Loose name/title equivalence: either is a substring of the other,
+    case-insensitive. Tolerates additions like '(Remastered)' or feature
+    credits while rejecting substantively different values."""
+    af, bf = a.casefold(), b.casefold()
+    return af in bf or bf in af
+
+
+def _isrc_match_is_consistent(original: Track, candidate: Track) -> bool:
+    """Sanity-check an ISRC hit before treating it as the same recording.
+
+    Spotify's ISRC tagging is occasionally wrong — covers, re-records, and
+    mistagged compilations sometimes share an ISRC with an unrelated track.
+    Require that the title and the original's primary artist are roughly
+    compatible with the candidate (allowing minor variations) before
+    accepting.
+    """
+    if not _names_compatible(original.name, candidate.name):
+        return False
+    return any(
+        _names_compatible(original.primary_artist, a) for a in candidate.artists
+    )
+
+
 def find_replacement(
     client: SearchClient, track: Track, market: str, limit: int = 10
 ) -> Match | None:
@@ -126,8 +150,11 @@ def find_replacement(
             if item["id"] == track.id:
                 continue
             replacement = _track_from_api(item)
-            if replacement is not None:
-                return Match(track=replacement, confidence=Confidence.EXACT)
+            if replacement is None:
+                continue
+            if not _isrc_match_is_consistent(track, replacement):
+                continue
+            return Match(track=replacement, confidence=Confidence.EXACT)
 
     primary = track.primary_artist
     query = f'track:"{track.name}" artist:"{primary}"'

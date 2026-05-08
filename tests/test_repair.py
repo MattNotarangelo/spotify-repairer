@@ -108,6 +108,122 @@ def test_isrc_search_skips_unplayable() -> None:
     assert find_replacement(client, track, market="US") is None
 
 
+def test_isrc_match_rejects_when_artist_differs() -> None:
+    """Spotify occasionally shares ISRCs across covers/re-records. Even with
+    a matching ISRC, an unrelated artist means it's not actually the same
+    recording — fall through to the name+artist search instead."""
+    track = _track(isrc="AUUM71101248", artists=("Matt Corby",), name="Brother")
+    client = FakeClient(
+        {
+            "isrc:AUUM71101248": [
+                _result("cover", artists=["İncici"], isrc="AUUM71101248")
+            ],
+            'track:"Brother"': [],
+        }
+    )
+
+    assert find_replacement(client, track, market="US") is None
+
+
+def test_isrc_match_rejects_when_title_substantively_differs() -> None:
+    track = _track(isrc="ISRC1", name="Brother", artists=("Matt Corby",))
+    client = FakeClient(
+        {
+            "isrc:ISRC1": [
+                _result("wrong", name="Sister", artists=["Matt Corby"], isrc="ISRC1")
+            ],
+            'track:"Brother"': [],
+        }
+    )
+
+    assert find_replacement(client, track, market="US") is None
+
+
+def test_isrc_match_accepts_when_title_has_remaster_suffix() -> None:
+    """'Brother' → 'Brother (Remastered)' is a legitimate same-recording variant."""
+    track = _track(isrc="ISRC1", name="Brother", artists=("Matt Corby",))
+    client = FakeClient(
+        {
+            "isrc:ISRC1": [
+                _result(
+                    "remaster",
+                    name="Brother (Remastered)",
+                    artists=["Matt Corby"],
+                    isrc="ISRC1",
+                )
+            ],
+        }
+    )
+
+    match = find_replacement(client, track, market="US")
+    assert match is not None
+    assert match.confidence == Confidence.EXACT
+    assert match.track.id == "remaster"
+
+
+def test_isrc_match_accepts_when_artist_credits_added() -> None:
+    """'Adele' → 'Adele, Beyoncé' (added feature) is legitimate."""
+    track = _track(isrc="ISRC1", name="Hello", artists=("Adele",))
+    client = FakeClient(
+        {
+            "isrc:ISRC1": [
+                _result(
+                    "feat",
+                    name="Hello",
+                    artists=["Adele, Beyoncé"],
+                    isrc="ISRC1",
+                )
+            ],
+        }
+    )
+
+    match = find_replacement(client, track, market="US")
+    assert match is not None
+    assert match.confidence == Confidence.EXACT
+
+
+def test_isrc_match_accepts_when_title_only_differs_in_case() -> None:
+    track = _track(isrc="ISRC1", name="Brother", artists=("Matt Corby",))
+    client = FakeClient(
+        {
+            "isrc:ISRC1": [
+                _result(
+                    "remaster",
+                    name="brother",
+                    artists=["matt corby"],
+                    isrc="ISRC1",
+                )
+            ],
+        }
+    )
+
+    match = find_replacement(client, track, market="US")
+    assert match is not None
+    assert match.confidence == Confidence.EXACT
+    assert match.track.id == "remaster"
+
+
+def test_isrc_match_accepts_when_original_primary_artist_appears_among_credits() -> None:
+    """Re-uploads sometimes add featured-artist credits not on the original."""
+    track = _track(isrc="ISRC1", name="Brother", artists=("Matt Corby",))
+    client = FakeClient(
+        {
+            "isrc:ISRC1": [
+                _result(
+                    "rerelease",
+                    name="Brother",
+                    artists=["Matt Corby", "Featured"],
+                    isrc="ISRC1",
+                )
+            ],
+        }
+    )
+
+    match = find_replacement(client, track, market="US")
+    assert match is not None
+    assert match.confidence == Confidence.EXACT
+
+
 def test_isrc_match_takes_priority_over_name_artist() -> None:
     track = _track(isrc="USRC12345678")
     client = FakeClient(

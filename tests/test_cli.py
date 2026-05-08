@@ -260,6 +260,77 @@ def test_playlist_source_format() -> None:
     assert cli.playlist_source("abc123") == "playlist:abc123"
 
 
+# --- diff display -----------------------------------------------------------
+
+
+def test_diff_track_lines_marks_identical_fields_as_no_change() -> None:
+    original = _track("a", isrc="ISRC1", duration_ms=200_000)
+    replacement = _track("b", isrc="ISRC1", duration_ms=200_000)
+
+    lines = cli._diff_track_lines(original, replacement)
+
+    assert all("(no change)" in line.text for line in lines)
+    assert all(line.changed is False for line in lines)
+
+
+def test_diff_track_lines_shows_arrow_and_changed_flag_when_field_differs() -> None:
+    original = _track("a", album="25", duration_ms=200_000, isrc="ISRC1")
+    replacement = _track(
+        "b", album="25 (Remastered)", duration_ms=200_000, isrc="ISRC1"
+    )
+
+    lines = cli._diff_track_lines(original, replacement)
+
+    by_label = {
+        "Artists:": next(l for l in lines if "Artists:" in l.text),
+        "Title:": next(l for l in lines if "Title:" in l.text),
+        "Album:": next(l for l in lines if "Album:" in l.text),
+        "Length:": next(l for l in lines if "Length:" in l.text),
+        "ISRC:": next(l for l in lines if "ISRC:" in l.text),
+    }
+
+    assert by_label["Artists:"].changed is False
+    assert "(no change)" in by_label["Artists:"].text
+    assert by_label["Title:"].changed is False
+    assert by_label["Album:"].changed is True
+    assert "25 → 25 (Remastered)" in by_label["Album:"].text
+    assert by_label["Length:"].changed is False
+    assert by_label["ISRC:"].changed is False
+
+
+def test_diff_track_lines_treats_case_only_differences_as_no_change() -> None:
+    """Spotify ingests of the same recording sometimes differ only in
+    capitalization — those should not surface as a diff."""
+    original = _track(
+        "a",
+        name="Time for Us",
+        artists=("composer",),
+        album="soundtrack",
+        isrc="ISRC1",
+    )
+    replacement = _track(
+        "b",
+        name="Time For Us",
+        artists=("Composer",),
+        album="Soundtrack",
+        isrc="isrc1",
+    )
+
+    lines = cli._diff_track_lines(original, replacement)
+
+    assert all(line.changed is False for line in lines)
+    assert all("(no change)" in line.text for line in lines)
+
+
+def test_diff_track_lines_omits_isrc_row_when_replacement_has_no_isrc() -> None:
+    original = _track("a", isrc="ISRC1")
+    replacement = _track("b", isrc=None)
+
+    lines = cli._diff_track_lines(original, replacement)
+
+    assert not any("ISRC:" in line.text for line in lines)
+
+
 # --- retry behaviour --------------------------------------------------------
 
 
