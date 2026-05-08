@@ -1,0 +1,32 @@
+[project]
+name = "spotify-repairer"
+version = "0.1.0"
+description = "Find and replace unavailable Spotify tracks in your liked songs and playlists."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "spotipy>=2.23.0",
+    "blessed>=1.20.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "mypy>=1.0"]
+
+[project.scripts]
+spotify-repairer = "spotify_repairer.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["spotify_repairer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
