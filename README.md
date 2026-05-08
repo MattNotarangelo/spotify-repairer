@@ -4,6 +4,27 @@ A small CLI that finds tracks in your Spotify liked songs and playlists that
 have become unavailable in your market and adds playable alternatives next to
 them, with your confirmation per-track.
 
+## Why this exists
+
+Tracks in a Spotify library quietly turn grey over time. The usual causes are
+labels moving distributor (the recording is re-uploaded under a new Spotify
+track ID and the old ID stops resolving), regional licensing changes, and
+artist/label takedowns. The longer you've curated a library, the more of
+these you accumulate — and because grey tracks keep their title and position,
+it's easy to miss them until you try to play one.
+
+This tool walks the library, finds the grey tracks, and proposes a playable
+alternative for each one. Two design choices follow from how Spotify behaves:
+
+- **Non-destructive.** Originals are kept, not replaced. A grey track often
+  comes back on its own — when the same recording is re-ingested under a new
+  ID, Spotify re-routes the old ID to it and the track plays again with no
+  intervention. Deleting the original throws away that recovery path.
+- **Per-track confirmation.** ISRC matches are safe to auto-apply in
+  principle, but name+artist matches can land on a re-master, live cut, or
+  remix. The tool surfaces a confidence level and lets you decide rather
+  than silently rewriting the library.
+
 ## How it matches replacements
 
 For each unplayable track, candidates are ranked:
@@ -37,16 +58,25 @@ The log is purely an audit trail you can inspect manually.
 
 ## Setup
 
-You need a Spotify Developer app to authorize this tool against your account.
-Setup is one-time and takes ~2 minutes.
+Requires Python 3.10+. You need a Spotify Developer app to authorize this
+tool against your account — setup is one-time and takes ~2 minutes.
 
 1. Open <https://developer.spotify.com/dashboard> and create an app.
    - Name / description: anything.
-   - Redirect URI: `http://127.0.0.1:3000` (Spotify deprecated `localhost`
-     redirects — must be a loopback IP).
+   - Redirect URI: `http://127.0.0.1:3000` — paste exactly. Spotify
+     deprecated `localhost`, so it must be the loopback IP. Click **Add**,
+     then **Save** at the bottom; missing the Save step produces an
+     `INVALID_CLIENT: Invalid redirect URI` error on first run.
    - Which APIs: **Web API**.
-2. Copy `.env.example` to `.env` and paste in your app's **Client ID**.
-   (No client secret needed — this tool uses the PKCE flow.)
+   - After saving, open the app's **Settings** page to find your
+     **Client ID**. (No client secret needed — this tool uses the PKCE
+     flow, which is why a public Client ID alone is enough.)
+2. Copy `.env.example` to `.env` and set:
+
+   ```bash
+   CLIENT_ID=<paste your Client ID here>
+   ```
+
 3. Install:
 
    ```bash
@@ -65,8 +95,12 @@ or
 python -m spotify_repairer
 ```
 
-On first run, your browser will open Spotify's authorization page. The token
-is cached in `.cache` so subsequent runs don't re-prompt.
+On first run, your browser opens Spotify's authorization page asking you to
+grant library and playlist read/write permissions. After you accept, Spotify
+redirects to `http://127.0.0.1:3000/...` — the tool spins up a one-shot
+local listener on that port to catch the redirect, complete the PKCE code
+exchange, and cache the resulting token in `.cache`. Subsequent runs reuse
+the cached token and don't re-prompt.
 
 Menu:
 
