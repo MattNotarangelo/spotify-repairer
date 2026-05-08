@@ -23,29 +23,30 @@ alternative for each one. Two design choices follow from how Spotify behaves:
 - **Per-track confirmation.** ISRC matches are safe to auto-apply in
   principle, but name+artist matches can land on a re-master, live cut, or
   remix. The tool surfaces a confidence level and lets you decide rather
-  than silently rewriting the library.
+  than silently rewriting the library. A dry-run preview mode is available
+  if you want to see what *would* change before committing to anything.
 
 ## How it matches replacements
 
-For each unplayable track, candidates are ranked:
+For each unplayable track, candidates are classified:
 
 1. **Exact** — same **ISRC** (industry-standard recording identifier). Same
    recording, just ingested under a different Spotify track ID. This is the
    common case when a label moves distributors.
 2. **High** — same name and artist, with duration within ±2 seconds.
 3. **Low** — same name and artist, but duration differs (likely a re-master,
-   live version, or a different cut). Flagged so you can decide.
+   live version, or a different cut). Auto-skipped — too risky to apply
+   without listening, and you'd want to pick the right version yourself.
 
-You're shown the confidence level before each suggestion and asked `y/n/q`.
+Exact and high matches are surfaced for confirmation (`y/n/q`); low matches
+are reported in the post-scan summary so you know they exist but aren't
+prompted on.
 
 ## What gets changed
 
 Repairs are **non-destructive — originals are never removed**, only a playable
 alternative is added alongside:
 
-- **Originals are never deleted.** If the unplayable track ever becomes
-  playable again (via the same ID or via a same-ISRC re-upload Spotify
-  re-routes), it just works — no manual recovery needed.
 - **Playlists** — the replacement is inserted immediately after the original.
 - **Liked songs** — the replacement is added (Spotify orders liked songs by
   date added, so it appears at the top, not next to the original).
@@ -102,14 +103,18 @@ local listener on that port to catch the redirect, complete the PKCE code
 exchange, and cache the resulting token in `.cache`. Subsequent runs reuse
 the cached token and don't re-prompt.
 
-Menu:
+An arrow-key menu offers:
 
-- **1** — scan liked songs
-- **2** — scan a playlist
-- **x** — exit
+- **Preview liked songs (dry run)** — scan and show what would be added,
+  without writing anything.
+- **Preview playlist (dry run)** — same, for a chosen playlist.
+- **Repair liked songs** — scan and prompt to apply each suggestion.
+- **Repair playlist** — same, for a chosen playlist.
+- **Exit**.
 
-For each unplayable track found, you'll see the suggested replacement and can
-press `y` to add it, `n` to skip, or `q` to stop scanning.
+Use ↑/↓ to navigate, Enter to select, `q` to cancel. In repair mode, each
+unplayable track shows the suggested replacement as a per-field diff against
+the original, then prompts `y` to add it, `n` to skip, or `q` to stop scanning.
 
 ### Caveats
 
