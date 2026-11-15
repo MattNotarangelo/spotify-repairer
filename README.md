@@ -112,7 +112,8 @@ python -m spotify_repairer
 ```
 
 On first run, your browser opens Spotify's authorization page asking you to
-grant library and playlist read/write permissions. After you accept, Spotify
+grant library and playlist read/write permissions (plus your account's
+country, used to check which tracks are playable for you). After you accept, Spotify
 redirects to `http://127.0.0.1:3000/...` — the tool spins up a one-shot
 local listener on that port to catch the redirect, complete the PKCE code
 exchange, and cache the resulting token in `.cache`. Subsequent runs reuse
