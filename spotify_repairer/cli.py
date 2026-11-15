@@ -35,8 +35,10 @@ TRANSIENT_NETWORK_ERRORS = (
     requests.Timeout,
     ConnectionResetError,
 )
+# user-read-private is required for market=from_token (search returns 403
+# "Insufficient client scope" without it).
 SCOPES = (
-    "user-library-read user-library-modify "
+    "user-read-private user-library-read user-library-modify "
     "playlist-read-private playlist-modify-public playlist-modify-private"
 )
 LIKED_SOURCE = "liked_songs"
