@@ -99,9 +99,11 @@ def _track_from_api(track: dict[str, Any]) -> Track | None:
 def parse_track(item: dict[str, Any]) -> Track | None:
     """Parse a Spotify saved-track or playlist-item entry into a Track.
 
-    Returns None for non-track items (episodes) or malformed entries.
+    Playlist items carry the track under "item" (Feb 2026 API); saved tracks
+    and older playlist responses use "track". Returns None for non-track items
+    (episodes) or malformed entries.
     """
-    return _track_from_api(item.get("track") or {})
+    return _track_from_api(item.get("item") or item.get("track") or {})
 
 
 def _playable_search_results(

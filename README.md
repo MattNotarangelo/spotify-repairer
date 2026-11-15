@@ -59,8 +59,11 @@ The log is purely an audit trail you can inspect manually.
 
 ## Setup
 
-Requires Python 3.10+. You need a Spotify Developer app to authorize this
-tool against your account — setup is one-time and takes ~2 minutes.
+Requires Python 3.10+ (macOS ships 3.9 — install a newer one, or use
+[uv](https://docs.astral.sh/uv/), which fetches one for you). You need a
+Spotify Developer app to authorize this tool against your account — setup is
+one-time and takes ~2 minutes. Since February 2026, Spotify requires the app
+owner to have **Spotify Premium** for Development Mode apps.
 
 1. Open <https://developer.spotify.com/dashboard> and create an app.
    - Name / description: anything.
@@ -78,13 +81,25 @@ tool against your account — setup is one-time and takes ~2 minutes.
    CLIENT_ID=<paste your Client ID here>
    ```
 
-3. Install:
+3. Install into a virtual environment:
 
    ```bash
+   uv venv && uv pip install -e .
+   source .venv/bin/activate
+   ```
+
+   or, without uv:
+
+   ```bash
+   python3.12 -m venv .venv   # any Python 3.10+
+   source .venv/bin/activate
+   pip install --upgrade pip  # editable installs need pip >= 21.3
    pip install -e .
    ```
 
 ## Usage
+
+With the virtual environment activated:
 
 ```bash
 spotify-repairer
@@ -120,6 +135,8 @@ the original, then prompts `y` to add it, `n` to skip, or `q` to stop scanning.
 
 - **Playlists grow.** Each repair inserts an additional track without removing
   the original, so playlists with many unplayable tracks will get longer.
+- **Only playlists you own or collaborate on** are listed — Spotify's API
+  doesn't expose the contents of other playlists to Development Mode apps.
 - **Liked-songs replacements appear at the top** (Spotify API can't insert at
   a specific date-added position).
 - **Audio fingerprinting isn't possible** through Spotify's public API —
@@ -132,6 +149,7 @@ the original, then prompts `y` to add it, `n` to skip, or `q` to stop scanning.
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"   # or: pip install -e ".[dev]"
 pytest
+mypy spotify_repairer tests
 ```

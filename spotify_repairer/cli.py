@@ -67,9 +67,9 @@ def login() -> spotipy.Spotify:
     )
 
 
-def get_user_market(sp: spotipy.Spotify) -> str:
-    user = sp.current_user() or {}
-    return user.get("country") or "US"
+# GET /me no longer returns `country` for Development Mode apps (Feb 2026), so
+# let Spotify resolve the market from the user's token instead.
+MARKET = "from_token"
 
 
 # --- pagination -------------------------------------------------------------
@@ -258,9 +258,16 @@ def select_from_menu(
 
 
 def select_playlist(sp: spotipy.Spotify, term: Terminal) -> tuple[str, str] | None:
-    playlists = _fetch_all_playlists(sp)
+    # Spotify only exposes items of playlists the user owns or collaborates on,
+    # and only those can be modified anyway.
+    user_id = (sp.current_user() or {}).get("id")
+    playlists = [
+        p
+        for p in _fetch_all_playlists(sp)
+        if p.get("collaborative") or (p.get("owner") or {}).get("id") == user_id
+    ]
     if not playlists:
-        print(term.yellow("No playlists found."))
+        print(term.yellow("No playlists you own or collaborate on."))
         return None
     options = [(p["id"], p["name"]) for p in playlists]
     header = [term.black_on_darkkhaki(term.center("select a playlist"))]
@@ -548,7 +555,7 @@ def main() -> None:
     logging.getLogger("spotipy").setLevel(logging.ERROR)
     sp = login()
     term = Terminal()
-    market = get_user_market(sp)
+    market = MARKET
     options = [
         ("preview_liked", "Preview liked songs (dry run)"),
         ("preview_playlist", "Preview playlist (dry run)"),
@@ -559,7 +566,6 @@ def main() -> None:
     while True:
         header = [
             term.black_on_darkkhaki(term.center("spotify-repairer")),
-            f"Market: {market}",
         ]
         choice = select_from_menu(term, header, options)
         if choice is None or choice == "exit":
