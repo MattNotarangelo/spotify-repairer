@@ -392,22 +392,27 @@ def test_find_replacements_parallel_isolates_persistent_failure(
     assert results[1] is None  # bad track gracefully became None
 
 
-# --- get_user_market handles None -------------------------------------------
+# --- select_playlist -------------------------------------------------------
 
 
-def test_get_user_market_falls_back_when_current_user_returns_none() -> None:
+def test_select_playlist_offers_only_owned_or_collaborative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sp = MagicMock()
-    sp.current_user.return_value = None
-    assert cli.get_user_market(sp) == "US"
+    sp.current_user.return_value = {"id": "me"}
+    sp.current_user_playlists.return_value = {
+        "items": [
+            {"id": "own", "name": "Mine", "owner": {"id": "me"}},
+            {"id": "collab", "name": "Shared", "owner": {"id": "x"}, "collaborative": True},
+            {"id": "other", "name": "Followed", "owner": {"id": "x"}},
+        ]
+    }
+    offered: list[tuple[str, str]] = []
 
+    def fake_menu(_term: Any, _header: Any, options: list[tuple[str, str]]) -> str:
+        offered.extend(options)
+        return "collab"
 
-def test_get_user_market_falls_back_when_country_missing() -> None:
-    sp = MagicMock()
-    sp.current_user.return_value = {"display_name": "x"}
-    assert cli.get_user_market(sp) == "US"
-
-
-def test_get_user_market_returns_country() -> None:
-    sp = MagicMock()
-    sp.current_user.return_value = {"country": "AU"}
-    assert cli.get_user_market(sp) == "AU"
+    monkeypatch.setattr(cli, "select_from_menu", fake_menu)
+    assert cli.select_playlist(sp, MagicMock()) == ("collab", "Shared")
+    assert offered == [("own", "Mine"), ("collab", "Shared")]

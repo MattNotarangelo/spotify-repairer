@@ -392,6 +392,12 @@ def test_parse_track_handles_missing_optional_fields() -> None:
     assert track.artists == ("Adele",)
 
 
+def test_parse_track_reads_playlist_item_field() -> None:
+    item = {"item": {"id": "t1", "name": "Song", "artists": [{"name": "A"}]}}
+    track = parse_track(item)
+    assert track is not None and track.id == "t1"
+
+
 def test_parse_track_returns_none_for_episode() -> None:
     assert parse_track({"track": None}) is None
 
